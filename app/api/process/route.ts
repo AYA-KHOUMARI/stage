@@ -1,12 +1,38 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { getPool } from '@/lib/db';
-import { parseReader, parseMobilier, reconcile } from '@/lib/reconcile';
+import { parseReader, parseMobilier, reconcile, normalizeCode } from '@/lib/reconcile';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function sqlDate(date: Date | null) { return date ? date : null; }
+const BATCH_SIZE = 2000;
+const RETRYABLE_MYSQL_ERRORS = new Set(['ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT']);
+
+function sqlDate(date: Date | null) { return date ?? null; }
+
+async function executeWithRetry<T>(operation: () => Promise<T>, attempts = 4): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      lastError = error;
+      if (!RETRYABLE_MYSQL_ERRORS.has(error?.code) || attempt === attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 300 * attempt));
+    }
+  }
+  throw lastError;
+}
+
+async function bulkInsert(connection: any, table: string, columns: string, rows: unknown[][], batchSize = BATCH_SIZE) {
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const chunk = rows.slice(i, i + batchSize);
+    const placeholders = chunk.map((row) => `(${row.map(() => '?').join(',')})`).join(',');
+    const values = chunk.flat();
+    await executeWithRetry(() => connection.execute(`INSERT INTO ${table} (${columns}) VALUES ${placeholders}`, values));
+  }
+}
 
 export async function POST(request: Request) {
   try {
@@ -24,84 +50,84 @@ export async function POST(request: Request) {
     const readerResult = parseReader(lecteurBuffer);
     const reader = readerResult.rows;
 
-    if (!inventory.length) throw new Error('Aucune ligne valide trouvée dans Mobilier Global.');
+    if (!inventory.length) throw new Error('Aucune ligne de données trouvée dans le fichier Mobilier.');
     if (!reader.length) throw new Error(`Aucune ligne valide trouvée dans la feuille « ${readerResult.meta.sheetName} » du fichier Lecteur.`);
 
-    const preview = reconcile(inventory, reader);
+    const results = reconcile(inventory, reader);
+    const newMachines = results.filter((row) => row.status === 'Nouveau').length;
     const batchId = randomUUID();
     const pool = getPool();
     const connection = await pool.getConnection();
 
     try {
+      // Each operation is committed in one transaction, but every INSERT is
+      // capped at 2,000 rows. No giant INSERT is generated.
       await connection.beginTransaction();
-
       await connection.execute(
         'INSERT INTO imports (batch_id, mobilier_filename, lecteur_filename) VALUES (?, ?, ?)',
         [batchId, mobilierFile.name, lecteurFile.name]
       );
 
-      for (let i = 0; i < inventory.length; i += 500) {
-        const chunk = inventory.slice(i, i + 500);
-        const placeholders = chunk.map(() => '(?,?,?,?,?,?,?, ?,NULL,NULL)').join(',');
-        const values = chunk.flatMap((row) => [
+      await bulkInsert(connection, 'inventory_items',
+        'batch_id, bt_inv2024, designation_affect, direction, code_invest, designation, specification, original_etat, reader_etat, reader_bt, reader_date, result_status',
+        results.map((row) => [
           batchId, row.btInv2024, row.designationAffect, row.direction,
-          row.codeInvest, row.designation, row.specification, row.originalEtat
-        ]);
-        await connection.execute(
-          `INSERT INTO inventory_items (batch_id, bt_inv2024, designation_affect, direction, code_invest, designation, specification, original_etat, reader_etat, reader_bt) VALUES ${placeholders}`,
-          values
-        );
+          row.codeInvest, row.designation, row.specification, row.originalEtat,
+          row.readerEtat, row.readerBt, sqlDate(row.readerDate), row.status
+        ])
+      );
+
+      await bulkInsert(connection, 'reader_scans',
+        'batch_id, barcode, etat, affect, date_heure_entree',
+        reader.map((row) => [batchId, row.barcode, row.etat, row.affect, sqlDate(row.dateHeureEntree)])
+      );
+
+      const [inventoryIds] = await connection.query(
+        'SELECT id FROM inventory_items WHERE batch_id = ? ORDER BY id ASC', [batchId]
+      );
+      const [readerIds] = await connection.query(
+        'SELECT id FROM reader_scans WHERE batch_id = ? ORDER BY id ASC', [batchId]
+      );
+      const inventoryIdRows = inventoryIds as Array<{ id: number }>;
+      const readerIdRows = readerIds as Array<{ id: number }>;
+
+      if (inventoryIdRows.length !== results.length) {
+        throw new Error(`Contrôle d'intégrité échoué : ${results.length} lignes finales calculées, mais ${inventoryIdRows.length} enregistrées.`);
+      }
+      if (readerIdRows.length !== reader.length) {
+        throw new Error(`Contrôle d'intégrité échoué : ${reader.length} lignes Lecteur valides, mais ${readerIdRows.length} enregistrées.`);
       }
 
-      for (let i = 0; i < reader.length; i += 500) {
-        const chunk = reader.slice(i, i + 500);
-        const placeholders = chunk.map(() => '(?,?,?,?,?)').join(',');
-        const values = chunk.flatMap((row) => [batchId, row.barcode, row.etat, row.affect, sqlDate(row.dateHeureEntree)]);
-        await connection.execute(
-          `INSERT INTO reader_scans (batch_id, barcode, etat, affect, date_heure_entree) VALUES ${placeholders}`,
-          values
-        );
+      const latestReaderId = new Map<string, number>();
+      const latestReaderDate = new Map<string, number>();
+      for (let i = 0; i < reader.length; i++) {
+        const key = normalizeCode(reader[i].barcode);
+        if (!key) continue;
+        const currentTime = reader[i].dateHeureEntree?.getTime() ?? 0;
+        const previousTime = latestReaderDate.get(key);
+        if (previousTime === undefined || currentTime >= previousTime) {
+          latestReaderDate.set(key, currentTime);
+          latestReaderId.set(key, readerIdRows[i].id);
+        }
       }
 
-      // The final database reconciliation is a real SQL JOIN. We pick the latest reader scan per barcode.
-      await connection.execute(`
-        INSERT INTO comparison_results (batch_id, inventory_item_id, reader_scan_id, database_bt, reader_bt, result_status)
-        SELECT
-          i.batch_id,
-          i.id,
-          r.id,
-          i.bt_inv2024,
-          r.affect,
-          CASE
-            WHEN r.id IS NULL THEN 'NON_TROUVE'
-            WHEN UPPER(TRIM(COALESCE(i.bt_inv2024, ''))) LIKE 'BT%'
-             AND UPPER(TRIM(COALESCE(r.affect, ''))) LIKE 'BT%'
-             AND UPPER(TRIM(i.bt_inv2024)) = UPPER(TRIM(r.affect)) THEN 'DONE'
-            ELSE 'DEPLACE'
-          END
-        FROM inventory_items i
-        LEFT JOIN reader_scans r
-          ON r.id = (
-            SELECT r2.id
-            FROM reader_scans r2
-            WHERE r2.batch_id = i.batch_id
-              AND UPPER(TRIM(r2.barcode)) = UPPER(TRIM(i.code_invest))
-            ORDER BY r2.date_heure_entree DESC, r2.id DESC
-            LIMIT 1
-          )
-        WHERE i.batch_id = ?
-      `, [batchId]);
+      const comparisons = results.map((row, i) => {
+        const readerId = latestReaderId.get(normalizeCode(row.codeInvest)) ?? null;
+        return [batchId, inventoryIdRows[i].id, readerId, row.btInv2024, row.readerBt, row.status];
+      });
 
-      await connection.execute(`
-        UPDATE inventory_items i
-        INNER JOIN comparison_results c ON c.inventory_item_id = i.id AND c.batch_id = i.batch_id
-        LEFT JOIN reader_scans r ON r.id = c.reader_scan_id
-        SET i.reader_etat = r.etat,
-            i.reader_bt = r.affect,
-            i.reader_date = r.date_heure_entree,
-            i.result_status = c.result_status
-        WHERE i.batch_id = ?
-      `, [batchId]);
+      await bulkInsert(connection, 'comparison_results',
+        'batch_id, inventory_item_id, reader_scan_id, database_bt, reader_bt, result_status',
+        comparisons
+      );
+
+      const [countRows] = await connection.query(
+        `SELECT COUNT(*) AS total FROM comparison_results WHERE batch_id = ?`, [batchId]
+      );
+      const storedTotal = Number((countRows as Array<any>)[0]?.total || 0);
+      if (storedTotal !== results.length) {
+        throw new Error(`Contrôle d'intégrité échoué : ${results.length} résultats attendus, ${storedTotal} enregistrés.`);
+      }
 
       await connection.commit();
     } catch (error) {
@@ -111,20 +137,24 @@ export async function POST(request: Request) {
       connection.release();
     }
 
-    const counts = preview.reduce((acc, row) => {
+    const counts = results.reduce((acc, row) => {
       acc[row.status] += 1;
       return acc;
-    }, { DONE: 0, DEPLACE: 0, NON_TROUVE: 0 });
+    }, { Traité: 0, Deplacé: 0, Non_Trouvé: 0, Nouveau: 0 });
 
     return NextResponse.json({
       batchId,
       files: { mobilier: mobilierFile.name, lecteur: lecteurFile.name },
-      total: preview.length,
+      total: results.length,
+      mobilierRows: inventory.length,
       readerRows: reader.length,
+      readerMeaningfulRows: readerResult.meaningfulRows,
+      readerInvalidBarcodeRows: readerResult.invalidBarcodeRows,
+      newMachines,
       readerSheet: readerResult.meta.sheetName,
       readerHeaderRow: readerResult.meta.headerRow,
       counts,
-      rows: preview.slice(0, 200).map((row) => ({ ...row, readerDate: row.readerDate?.toISOString() || null }))
+      rows: results.slice(0, 200).map((row) => ({ ...row, readerDate: row.readerDate?.toISOString() || null }))
     });
   } catch (error) {
     console.error(error);

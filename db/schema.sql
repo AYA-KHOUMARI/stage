@@ -1,6 +1,18 @@
 CREATE DATABASE IF NOT EXISTS inventory_reconciliation;
 USE inventory_reconciliation;
 
+CREATE TABLE IF NOT EXISTS app_users (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  username VARCHAR(100) NOT NULL,
+  recovery_email VARCHAR(255) NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  recovery_code_hash CHAR(64) NULL,
+  recovery_code_expires_at DATETIME NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_app_users_username (username)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS imports (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   batch_id CHAR(36) NOT NULL,
@@ -24,7 +36,7 @@ CREATE TABLE IF NOT EXISTS inventory_items (
   reader_etat VARCHAR(100) NULL,
   reader_bt VARCHAR(100) NULL,
   reader_date DATETIME NULL,
-  result_status ENUM('DONE','DEPLACE','NON_TROUVE') NOT NULL DEFAULT 'NON_TROUVE',
+  result_status ENUM('Traité','Deplacé','Non_Trouvé','Nouveau') NOT NULL DEFAULT 'Non_Trouvé',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_inventory_batch (batch_id),
@@ -52,7 +64,7 @@ CREATE TABLE IF NOT EXISTS comparison_results (
   reader_scan_id BIGINT UNSIGNED NULL,
   database_bt VARCHAR(100) NULL,
   reader_bt VARCHAR(100) NULL,
-  result_status ENUM('DONE','DEPLACE','NON_TROUVE') NOT NULL,
+  result_status ENUM('Traité','Deplacé','Non_Trouvé','Nouveau') NOT NULL,
   compared_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_comparison_item (batch_id, inventory_item_id),

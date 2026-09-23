@@ -20,6 +20,7 @@ export async function GET(request: Request) {
         i.code_invest AS codeInvest,
         i.designation,
         i.specification,
+        i.original_etat AS originalEtat,
         r.etat AS readerEtat,
         c.reader_bt AS readerBt,
         r.date_heure_entree AS readerDate,

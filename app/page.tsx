@@ -8,6 +8,7 @@ import {
   FileSpreadsheet,
   GitCompareArrows,
   Loader2,
+  LogOut,
   MapPin,
   MoveRight,
   PackageCheck,
@@ -15,9 +16,10 @@ import {
   ShieldCheck,
   UploadCloud,
   XCircle,
+  KeyRound,
 } from "lucide-react";
 
-type Status = "DONE" | "DEPLACE" | "NON_TROUVE";
+type Status = "Traité" | "Deplacé" | "Non_Trouvé" | "Nouveau";
 type ResultRow = {
   btInv2024: string | null;
   designationAffect: string | null;
@@ -102,17 +104,21 @@ function DropZone({
 
 function StatusBadge({ status }: { status: Status }) {
   const styles =
-    status === "DONE"
+    status === "Traité"
       ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
-      : status === "DEPLACE"
+      : status === "Deplacé"
         ? "bg-amber-50 text-amber-700 ring-amber-200"
-        : "bg-rose-50 text-rose-700 ring-rose-200";
+        : status === "Nouveau"
+          ? "bg-indigo-50 text-indigo-700 ring-indigo-200"
+          : "bg-rose-50 text-rose-700 ring-rose-200";
   const Icon =
-    status === "DONE"
+    status === "Traité"
       ? CheckCircle2
-      : status === "DEPLACE"
+      : status === "Deplacé"
         ? MoveRight
-        : XCircle;
+        : status === "Nouveau"
+          ? Database
+          : XCircle;
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ring-1 ${styles}`}
@@ -183,6 +189,11 @@ export default function Home() {
     window.location.href = `/api/export?batchId=${encodeURIComponent(result.batchId)}`;
   }
 
+  async function logout() {
+    await fetch("/api/logout", { method: "POST" });
+    window.location.href = "/login";
+  }
+
   return (
     <main className="min-h-screen bg-[#f7f9fc] text-slate-900">
       <header className="border-b border-slate-200/80 bg-white/90 backdrop-blur">
@@ -196,9 +207,24 @@ export default function Home() {
                 InventoMatch
               </div>
               <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
-                Inventory reconciliation
+                {" "}
+                Réconciliation de l'inventaire{" "}
               </div>
             </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <a
+              href="/change-password"
+              className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+            >
+              <KeyRound size={16} /> Mot de passe
+            </a>
+            <button
+              onClick={logout}
+              className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+            >
+              <LogOut size={16} /> Déconnexion
+            </button>
           </div>
         </div>
       </header>
@@ -225,12 +251,12 @@ export default function Home() {
       <section className="mx-auto max-w-7xl px-5 py-10 lg:px-8">
         <div className="grid gap-6 lg:grid-cols-2">
           <DropZone
-            label="1. Fichier Mobilier"
+            label="1. Fichier Mobilier "
             file={mobilier}
             onFile={setMobilier}
           />
           <DropZone
-            label="2. Fichier Lecteur"
+            label="2. Fichier Lecteur "
             file={lecteur}
             onFile={setLecteur}
           />
@@ -240,7 +266,7 @@ export default function Home() {
           <div>
             <p className="font-bold">Prêt pour la comparaison ?</p>
             <p className="mt-1 text-sm text-slate-500">
-              Code Invest ↔ Barcode, puis BT INV2024 ↔ BT détecté.
+              Code Invest ↔ Barcode, puis BT INV ↔ BT détecté.
             </p>
           </div>
           <button
@@ -270,17 +296,9 @@ export default function Home() {
           <div className="mt-10 space-y-6">
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo-600">
-                  Résultat #{result.batchId.slice(0, 8)}
-                </p>
                 <h2 className="mt-1 text-2xl font-black">
                   Rapport de réconciliation
                 </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  {result.files.mobilier} · {result.files.lecteur} ·{" "}
-                  {result.readerRows.toLocaleString("fr-FR")} lignes lues
-                  automatiquement dans « {result.readerSheet} »
-                </p>
               </div>
               <button
                 onClick={download}
@@ -290,7 +308,7 @@ export default function Home() {
               </button>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
                 <div className="flex items-center justify-between">
                   <PackageCheck className="text-indigo-600" size={21} />
@@ -301,17 +319,19 @@ export default function Home() {
                 <p className="mt-4 text-3xl font-black">
                   {result.total.toLocaleString("fr-FR")}
                 </p>
-                <p className="mt-1 text-sm text-slate-500">articles Mobilier</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  éléments finaux (Mobilier + nouveaux)
+                </p>
               </div>
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5">
                 <div className="flex items-center justify-between">
                   <CheckCircle2 className="text-emerald-600" size={21} />
                   <span className="text-xs font-bold text-emerald-700">
-                    DONE
+                    Traité
                   </span>
                 </div>
                 <p className="mt-4 text-3xl font-black text-emerald-800">
-                  {result.counts.DONE.toLocaleString("fr-FR")}
+                  {result.counts.Traité.toLocaleString("fr-FR")}
                 </p>
                 <p className="mt-1 text-sm text-emerald-700/80">même BT</p>
               </div>
@@ -319,11 +339,11 @@ export default function Home() {
                 <div className="flex items-center justify-between">
                   <MoveRight className="text-amber-600" size={21} />
                   <span className="text-xs font-bold text-amber-700">
-                    DEPLACE
+                    Deplacé
                   </span>
                 </div>
                 <p className="mt-4 text-3xl font-black text-amber-800">
-                  {result.counts.DEPLACE.toLocaleString("fr-FR")}
+                  {result.counts.Deplacé.toLocaleString("fr-FR")}
                 </p>
                 <p className="mt-1 text-sm text-amber-700/80">BT différent</p>
               </div>
@@ -335,10 +355,24 @@ export default function Home() {
                   </span>
                 </div>
                 <p className="mt-4 text-3xl font-black text-rose-800">
-                  {result.counts.NON_TROUVE.toLocaleString("fr-FR")}
+                  {result.counts.Non_Trouvé.toLocaleString("fr-FR")}
                 </p>
                 <p className="mt-1 text-sm text-rose-700/80">
-                  code absent du fichier Lecteur
+                  dans Mobilier mais absent de Lecteur
+                </p>
+              </div>
+              <div className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-5">
+                <div className="flex items-center justify-between">
+                  <Database className="text-indigo-600" size={21} />
+                  <span className="text-xs font-bold text-indigo-700">
+                    NOUVEAU
+                  </span>
+                </div>
+                <p className="mt-4 text-3xl font-black text-indigo-800">
+                  {result.counts.Nouveau.toLocaleString("fr-FR")}
+                </p>
+                <p className="mt-1 text-sm text-indigo-700/80">
+                  dans Lecteur mais absent de Mobilier
                 </p>
               </div>
             </div>
@@ -349,7 +383,7 @@ export default function Home() {
                   <h3 className="font-black">Aperçu des résultats</h3>
                   <p className="mt-1 text-xs text-slate-500">
                     Les 200 premières lignes sont affichées. L'Excel contient
-                    tout le résultat.
+                    tout le résultat, y compris les nouvelles machines.
                   </p>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
@@ -373,9 +407,10 @@ export default function Home() {
                     className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold outline-none focus:border-indigo-400"
                   >
                     <option value="ALL">Tous les statuts</option>
-                    <option value="DONE">DONE</option>
-                    <option value="DEPLACE">DEPLACE</option>
-                    <option value="NON_TROUVE">NON TROUVÉ</option>
+                    <option value="Traité">Traité</option>
+                    <option value="Deplacé">Deplacé</option>
+                    <option value="Non_Trouvé">NON TROUVÉ</option>
+                    <option value="Nouveau">NOUVEAU</option>
                   </select>
                 </div>
               </div>
@@ -435,42 +470,9 @@ export default function Home() {
                 </table>
               </div>
             </div>
-
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                <div className="flex items-center gap-3">
-                  <FileSpreadsheet className="text-indigo-600" size={19} />
-                  <p className="font-bold">Source Mobilier</p>
-                </div>
-                <p className="mt-3 break-all text-sm text-slate-500">
-                  {result.files.mobilier}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                <div className="flex items-center gap-3">
-                  <MapPin className="text-indigo-600" size={19} />
-                  <p className="font-bold">Source lecteur</p>
-                </div>
-                <p className="mt-3 text-sm text-slate-500">
-                  Feuille détectée : {result.readerSheet} · ligne d'en-tête :{" "}
-                  {result.readerHeaderRow}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                <div className="flex items-center gap-3">
-                  <Database className="text-indigo-600" size={19} />
-                  <p className="font-bold">Traitement</p>
-                </div>
-                <p className="mt-3 text-sm text-slate-500">
-                  Jointure SQL MySQL + export XLSX
-                </p>
-              </div>
-            </div>
           </div>
         )}
       </section>
-
-      <footer className="border-t border-slate-200 bg-white"></footer>
     </main>
   );
 }
