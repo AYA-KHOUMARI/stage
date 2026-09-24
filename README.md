@@ -86,8 +86,7 @@ The first successful login creates an application user from the username, passwo
 
 Configure email before using **Mot de passe oublié ?** in production:
 
-1. **Resend** (simplest for deployment): create an API key at [resend.com](https://resend.com), verify your domain, then set `RESEND_API_KEY` and `MAIL_FROM` in `.env.local`.
-2. **SMTP**: Gmail (app password), [Brevo](https://www.brevo.com) (`smtp-relay.brevo.com`, free tier), or any SMTP provider — set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, and `MAIL_FROM`.
+Use the Brevo HTTP API — set `BREVO_API_KEY` and `MAIL_FROM` in `.env.local` and in your Railway environment variables. `MAIL_FROM` must be a sender verified in Brevo.
 
 In local development without email configured, the 6-digit recovery code is printed in the terminal running `npm run dev`. Codes stay valid for 30 minutes.
 

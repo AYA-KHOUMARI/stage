@@ -9,8 +9,19 @@ export async function POST(request: Request) {
   const email =
     typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
   const user = username ? await getUser(username) : null;
+  const recoveryEmail = user?.recoveryEmail?.trim().toLowerCase();
 
-  if (user?.recoveryEmail && user.recoveryEmail.toLowerCase() === email) {
+  if (user && recoveryEmail && recoveryEmail !== email) {
+    return NextResponse.json(
+      {
+        error:
+          "Cette adresse email ne correspond pas à celle enregistrée lors de la création de votre compte.",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (user && recoveryEmail === email) {
     try {
       await sendRecoveryCode(email, user.username);
     } catch (error) {
@@ -18,7 +29,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            "Impossible d'envoyer l'email. Verifiez la configuration SMTP (SMTP_HOST, SMTP_USER, SMTP_PASSWORD).",
+            "Impossible d'envoyer l'email. Verifiez la configuration Brevo et la variable BREVO_API_KEY.",
         },
         { status: 503 },
       );
@@ -27,7 +38,6 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     ok: true,
-    message:
-      "Si les informations correspondent, un code a ete envoye a votre adresse email.",
+    message: "Un code a ete envoye a votre adresse email.",
   });
 }

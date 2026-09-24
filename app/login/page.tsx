@@ -61,6 +61,10 @@ export default function LoginPage() {
         );
       } else if (recoveryMode) {
         setRecoveryMode(false);
+        setRecoveryCodeSent(false);
+        setUsername("");
+        setEmail("");
+        setRecoveryCode("");
         setPassword("");
         setNewPassword("");
         setRecoverySecret("");
@@ -296,8 +300,15 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setRecoveryMode(!recoveryMode);
+                  const enteringRecoveryMode = !recoveryMode;
+                  setRecoveryMode(enteringRecoveryMode);
                   setRecoveryCodeSent(false);
+                  if (enteringRecoveryMode) {
+                    setUsername("");
+                    setEmail("");
+                    setRecoveryCode("");
+                    setNewPassword("");
+                  }
                   setError("");
                 }}
                 className="w-full text-sm font-bold text-indigo-600 hover:text-indigo-800"

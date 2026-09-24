@@ -1,12 +1,12 @@
 /**
- * Transactional email via Brevo HTTP API (port 443 – works on Railway).
+ * Transactional email via the Brevo HTTP API.
  *
  * Required environment variable:
- *   BREVO_API_KEY   – your Brevo v3 API key (Settings → API keys)
+ *   BREVO_API_KEY - Brevo v3 API key
  *
  * Optional:
- *   MAIL_FROM       – sender address shown to recipients
- *                     (defaults to the verified sender on your Brevo account)
+ *   MAIL_FROM - verified sender address, optionally in
+ *               "Display Name <email@domain.com>" format
  */
 
 type SendEmailInput = {
@@ -16,8 +16,7 @@ type SendEmailInput = {
 };
 
 function mailFrom(): { email: string; name?: string } {
-  const raw =
-    process.env.MAIL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER;
+  const raw = process.env.MAIL_FROM;
 
   if (!raw) {
     throw new Error(
@@ -40,12 +39,11 @@ export async function sendTransactionalEmail(
 
   if (!apiKey) {
     throw new Error(
-      "BREVO_API_KEY is not set. Add it to your Railway environment variables.",
+      "BREVO_API_KEY is not set. Add it to .env.local for local development and to Railway environment variables for deployment.",
     );
   }
 
   const sender = mailFrom();
-
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: {
@@ -63,8 +61,6 @@ export async function sendTransactionalEmail(
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(
-      `Brevo API error ${response.status}: ${body}`,
-    );
+    throw new Error(`Brevo API error ${response.status}: ${body}`);
   }
 }
