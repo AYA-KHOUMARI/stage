@@ -1,7 +1,13 @@
-import dns from "node:dns";
-import nodemailer from "nodemailer";
-
-dns.setDefaultResultOrder("ipv4first");
+/**
+ * Transactional email via Brevo HTTP API (port 443 – works on Railway).
+ *
+ * Required environment variable:
+ *   BREVO_API_KEY   – your Brevo v3 API key (Settings → API keys)
+ *
+ * Optional:
+ *   MAIL_FROM       – sender address shown to recipients
+ *                     (defaults to the verified sender on your Brevo account)
+ */
 
 type SendEmailInput = {
   to: string;
@@ -9,43 +15,56 @@ type SendEmailInput = {
   text: string;
 };
 
-function mailFrom(): string {
-  const from =
-    process.env.MAIL_FROM ||
-    process.env.SMTP_FROM ||
-    process.env.SMTP_USER;
+function mailFrom(): { email: string; name?: string } {
+  const raw =
+    process.env.MAIL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER;
 
-  if (!from) {
+  if (!raw) {
     throw new Error(
-      "Email sender not configured. Set MAIL_FROM (or SMTP_USER) in your environment.",
+      "Email sender not configured. Set MAIL_FROM in your environment.",
     );
   }
-  return from;
+
+  // Support "Display Name <email@domain.com>" format
+  const match = raw.match(/^(.+?)\s*<(.+?)>$/);
+  if (match) {
+    return { name: match[1].trim(), email: match[2].trim() };
+  }
+  return { email: raw.trim() };
 }
 
 export async function sendTransactionalEmail(
   input: SendEmailInput,
 ): Promise<void> {
-  const host = process.env.SMTP_HOST?.trim();
-  const user = process.env.SMTP_USER?.trim();
-  const password = process.env.SMTP_PASSWORD?.replace(/\s/g, "");
-  const from = mailFrom();
+  const apiKey = process.env.BREVO_API_KEY?.trim();
 
-  if (!host || !user || !password) {
+  if (!apiKey) {
     throw new Error(
-      "SMTP is not fully configured. Please set SMTP_HOST, SMTP_USER, and SMTP_PASSWORD in your environment.",
+      "BREVO_API_KEY is not set. Add it to your Railway environment variables.",
     );
   }
 
-  const port = Number(process.env.SMTP_PORT || 587);
-  const secure = process.env.SMTP_SECURE === "true" || port === 465;
+  const sender = mailFrom();
 
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: { user, pass: password },
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": apiKey,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      sender,
+      to: [{ email: input.to }],
+      subject: input.subject,
+      textContent: input.text,
+    }),
   });
 
-  await transporter.sendMail({ from, to: input.to, subject: input.subject, text: input.text });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `Brevo API error ${response.status}: ${body}`,
+    );
+  }
 }
